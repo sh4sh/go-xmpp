@@ -1466,6 +1466,10 @@ type Chat struct {
 	OriginID string
 	// Only for incoming messages, ID for outgoing messages will be generated.
 	StanzaID  StanzaID
+	// XEP-0461: id of the message being replied to (use StanzaID for groupchat)
+	ReplyID   string
+	// XEP-0461: JID of the author of the message being replied to
+	ReplyTo   string
 	Roster    Roster
 	Other     []string
 	OtherElem []XMLElement
@@ -1561,6 +1565,8 @@ func (c *Client) Recv() (stanza interface{}, err error) {
 				Lang:      v.Lang,
 				OriginID:  v.OriginID.ID,
 				StanzaID:  v.StanzaID,
+				ReplyID:   v.Reply.ID,
+				ReplyTo:   v.Reply.To,
 				Oob:       v.Oob,
 			}
 			return chat, nil
@@ -1852,10 +1858,19 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 		oobtext += `</x>`
 	}
 
+	var replytext string
+	if chat.replyID != `` {
+		replytext = `<reply-id='` + xmlEscape(chat.ReplyID) + `'`
+		if chat.ReplyTo != `` {
+			replytext += ` to='` + xmlEscape(chat.ReplyTo) + `'`
+		}
+		replytext += ` xmlns='urn:xmpp:reply:0'/>`
+	}
+
 	chat.Text = validUTF8(chat.Text)
 	id := getUUID()
-	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"+
-		"<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
+	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"
+		+ replytext + "<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
 		xmlEscape(chat.Remote), xmlEscape(chat.Type), id, subtext, xmlEscape(chat.Text),
 		XMPPNS_SID_0, id, oobtext, thdtext)
 	if c.LimitMaxBytes != 0 && len(stanza) > c.LimitMaxBytes {
@@ -2166,6 +2181,13 @@ type StanzaID struct {
 	By      string   `xml:"by,attr"`
 }
 
+// XEP-0461 Message Replies
+type clientReply struct {
+	XMLName xml.Name `xml:"urn:xmpp:reply:0 reply"`
+	ID      string   `xml:"id,attr"`
+	To      string   `xml:"to,attr"`
+}
+
 // RFC 3921  B.1  jabber:client
 type clientMessage struct {
 	XMLName xml.Name `xml:"jabber:client message"`
@@ -2183,6 +2205,9 @@ type clientMessage struct {
 	// XEP-0359
 	OriginID originID `xml:"origin-id"`
 	StanzaID StanzaID `xml:"stanza-id"`
+
+  // XEP-0461
+	Reply   clientReply `xml:"reply"` 
 
 	// Pubsub
 	Event clientPubsubEvent `xml:"event"`
