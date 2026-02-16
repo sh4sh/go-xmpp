@@ -1451,6 +1451,7 @@ func (c *Client) IsEncrypted() bool {
 
 // Chat is an incoming or outgoing XMPP chat message.
 type Chat struct {
+	ID      string
 	Remote  string
 	Type    string
 	Text    string
@@ -1554,6 +1555,7 @@ func (c *Client) Recv() (stanza interface{}, err error) {
 				v.Delay.Stamp,
 			)
 			chat := Chat{
+				ID:        v.ID,
 				Remote:    v.From,
 				Type:      v.Type,
 				Text:      v.Body,
@@ -1868,7 +1870,10 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 	}
 
 	chat.Text = validUTF8(chat.Text)
-	id := getUUID()
+	id := chat.ID
+	if id == "" {
+		id = getUUID()
+	}
 	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"+
 		replytext+"<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
 		xmlEscape(chat.Remote), xmlEscape(chat.Type), id, subtext, xmlEscape(chat.Text),
