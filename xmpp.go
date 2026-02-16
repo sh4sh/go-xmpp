@@ -1875,9 +1875,9 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 		id = getUUID()
 	}
 	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"+
-		replytext+"<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
+		"%s<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
 		xmlEscape(chat.Remote), xmlEscape(chat.Type), id, subtext, xmlEscape(chat.Text),
-		XMPPNS_SID_0, id, oobtext, thdtext)
+		replytext, XMPPNS_SID_0, id, oobtext, thdtext)
 	if c.LimitMaxBytes != 0 && len(stanza) > c.LimitMaxBytes {
 		return 0, fmt.Errorf("stanza size (%v bytes) exceeds server limit (%v bytes)",
 			len(stanza), c.LimitMaxBytes)
