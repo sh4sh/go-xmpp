@@ -1465,9 +1465,9 @@ type Chat struct {
 	// Only for incoming messages, ID for outgoing messages will be generated.
 	OriginID string
 	// Only for incoming messages, ID for outgoing messages will be generated.
-	StanzaID  StanzaID
+	StanzaID StanzaID
 	// XEP-0461: id of the message being replied to (use StanzaID for groupchat)
-	ReplyID   string
+	ReplyID string
 	// XEP-0461: JID of the author of the message being replied to
 	ReplyTo   string
 	Roster    Roster
@@ -1859,8 +1859,8 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 	}
 
 	var replytext string
-	if chat.replyID != `` {
-		replytext = `<reply-id='` + xmlEscape(chat.ReplyID) + `'`
+	if chat.ReplyID != `` {
+		replytext = `<reply id='` + xmlEscape(chat.ReplyID) + `'`
 		if chat.ReplyTo != `` {
 			replytext += ` to='` + xmlEscape(chat.ReplyTo) + `'`
 		}
@@ -1869,8 +1869,8 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 
 	chat.Text = validUTF8(chat.Text)
 	id := getUUID()
-	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"
-		+ replytext + "<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
+	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"+
+		replytext+"<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
 		xmlEscape(chat.Remote), xmlEscape(chat.Type), id, subtext, xmlEscape(chat.Text),
 		XMPPNS_SID_0, id, oobtext, thdtext)
 	if c.LimitMaxBytes != 0 && len(stanza) > c.LimitMaxBytes {
@@ -2206,8 +2206,8 @@ type clientMessage struct {
 	OriginID originID `xml:"origin-id"`
 	StanzaID StanzaID `xml:"stanza-id"`
 
-  // XEP-0461
-	Reply   clientReply `xml:"reply"` 
+	// XEP-0461
+	Reply clientReply `xml:"reply"`
 
 	// Pubsub
 	Event clientPubsubEvent `xml:"event"`
