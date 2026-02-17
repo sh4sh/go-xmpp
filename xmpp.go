@@ -1467,10 +1467,8 @@ type Chat struct {
 	OriginID string
 	// Only for incoming messages, ID for outgoing messages will be generated.
 	StanzaID StanzaID
-	// XEP-0461: id of the message being replied to (use StanzaID for groupchat)
-	ReplyID string
-	// XEP-0461: JID of the author of the message being replied to
-	ReplyTo   string
+	// XEP-0461
+	Reply     Reply
 	Roster    Roster
 	Other     []string
 	OtherElem []XMLElement
@@ -1567,8 +1565,7 @@ func (c *Client) Recv() (stanza interface{}, err error) {
 				Lang:      v.Lang,
 				OriginID:  v.OriginID.ID,
 				StanzaID:  v.StanzaID,
-				ReplyID:   v.Reply.ID,
-				ReplyTo:   v.Reply.To,
+				Reply:     v.Reply,
 				Oob:       v.Oob,
 			}
 			return chat, nil
@@ -1861,10 +1858,10 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 	}
 
 	var replytext string
-	if chat.ReplyID != `` {
-		replytext = `<reply id='` + xmlEscape(chat.ReplyID) + `'`
-		if chat.ReplyTo != `` {
-			replytext += ` to='` + xmlEscape(chat.ReplyTo) + `'`
+	if chat.Reply.ID != `` {
+		replytext = `<reply id='` + xmlEscape(chat.Reply.ID) + `'`
+		if chat.Reply.To != `` {
+			replytext += ` to='` + xmlEscape(chat.Reply.To) + `'`
 		}
 		replytext += ` xmlns='urn:xmpp:reply:0'/>`
 	}
@@ -2187,7 +2184,7 @@ type StanzaID struct {
 }
 
 // XEP-0461 Message Replies
-type clientReply struct {
+type Reply struct {
 	XMLName xml.Name `xml:"urn:xmpp:reply:0 reply"`
 	ID      string   `xml:"id,attr"`
 	To      string   `xml:"to,attr"`
@@ -2212,7 +2209,7 @@ type clientMessage struct {
 	StanzaID StanzaID `xml:"stanza-id"`
 
 	// XEP-0461
-	Reply clientReply `xml:"reply"`
+	Reply Reply `xml:"reply"`
 
 	// Pubsub
 	Event clientPubsubEvent `xml:"event"`
