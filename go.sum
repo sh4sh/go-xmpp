@@ -1,3 +1,5 @@
+github.com/Figure1/go-intervals v0.0.0-20180124190743-0109751545d5 h1:XeHDLbi4ku2IyYoiDlE2h627nnUsaJXGydDCR33o7Ek=
+github.com/Figure1/go-intervals v0.0.0-20180124190743-0109751545d5/go.mod h1:3yFSM9nNXS5nSaIwjpF+cPfSK3sqXn3HW+KyB40nLQM=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 golang.org/x/net v0.51.0 h1:94R/GTO7mt3/4wIKpcR5gkGmRLOuE/2hNGeWq/GBIFo=

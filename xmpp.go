@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"iter"
 	"math/big"
 	"net"
 	"net/http"
@@ -38,11 +39,13 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Figure1/go-intervals"
 	"github.com/google/uuid"
 	"golang.org/x/net/proxy"
 )
@@ -136,6 +139,26 @@ func (c *Client) JID() string {
 func containsIgnoreCase(s, substr string) bool {
 	s, substr = strings.ToUpper(s), strings.ToUpper(substr)
 	return strings.Contains(s, substr)
+}
+
+// IterIntervals returns an iterator over Figure1/go-interval.Intervals
+// making sure they are ordered (because that library doesn't necessarily)
+func IterIntervals(ints intervals.Intervals) iter.Seq2[int, int] {
+	starts := make([]int, 0, len(ints))
+	for start := range ints {
+		starts = append(starts, start)
+	}
+	sort.Ints(starts)
+	return func(yield func(int, int) bool) {
+		for _, start := range starts {
+			if start == ints[start] {
+				continue
+			}
+			if !yield(start, ints[start]) {
+				return
+			}
+		}
+	}
 }
 
 func connect(host string, user string, timeout time.Duration) (net.Conn, error) {
@@ -1546,11 +1569,77 @@ func (c *Client) Recv() (stanza interface{}, err error) {
 				"2006-01-02T15:04:05Z",
 				v.Delay.Stamp,
 			)
+
+			// XEP-0461 Message Replies
+			var reply *Reply
+			if v.Reply != nil {
+				reply = &Reply{ID: v.Reply.ID, To: v.Reply.To}
+				// notice: reply.Quote is set below; it's optional
+			}
+
+			// XEP-????: <fallback>s
+			// https://xmpp.org/extensions/inbox/compatibility-fallback.html
+			//
+			// This XEP defines intervals of the body text containing plain-text
+			// versions of some attached rich-text content. For each interval
+			// 'for' a purpose we understand, we are supposed to delete that
+			// interval from the body text and instead use the rich-text content.
+			// There are potentially many, fallbacks, each with many intervals,
+			// and the XEP doesn't prevent repeated 'for's nor overlaps.
+			//
+			// We must crop all fallbacks together at the same time because after
+			// cropping their indecies no longer make sense.
+			//
+			// Note also that per XEP-0426: characters indecies are by
+			// "number of Unicode code points", so we use runes.
+			body := []rune(v.Body)
+			if len(body) > 0 && len(v.Fallbacks) > 0 {
+				// this intervals library uses closed [a,b] intervals, but XMPP
+				// and go use half-open [a,b) intervals, so there's -1s on insert
+				// and +1s on reading.
+				body_intervals := intervals.New()
+				body_intervals.Insert(0, len(body)-1)
+				for _, f := range v.Fallbacks {
+					if f.Xmlns != "urn:xmpp:fallback:0" {
+						continue
+					} // TODO: enforce this by adding it to the struct metadata?
+
+					for _, b := range f.Bodies {
+						// Notice that it is allowed, though probably not used, for
+						// multiple <fallback>s for the same XMPP feature; in that case, we concatenante them all together.
+						if f.For == "urn:xmpp:reply:0" && v.Reply != nil {
+							reply.Quote += string(body[b.Start:b.End])
+
+							// snip this from body
+							body_intervals.Delete(b.Start, b.End-1)
+						}
+					}
+				}
+
+				// crop body to body_intervals
+				stripped_body := []rune("")
+				for start, end := range IterIntervals(body_intervals) {
+					stripped_body = append(stripped_body, body[start:end+1]...)
+				}
+				body = stripped_body
+			}
+
+			// XEP-0461 postprocessing
+			if reply != nil {
+				// note: we Unquote here because every client that uses <fallback> also
+				// embeds the quote in "> " (email/markdown)-style quotes. XMPP defines
+				// this style in  https://xmpp.org/extensions/xep-0393.html#quote and it
+				// is _mentioned_ in https://xmpp.org/extensions/xep-0461.html#intro
+				// but https://xmpp.org/extensions/xep-0461.html#compat doesn't explicitly
+				// require it, so this is slightly out of spec.
+				reply.Quote = Unquote(strings.TrimSuffix(reply.Quote, "\n"))
+			}
+
 			chat := Chat{
 				ID:        v.ID,
 				Remote:    v.From,
 				Type:      v.Type,
-				Text:      v.Body,
+				Text:      string(body),
 				Subject:   v.Subject,
 				Thread:    v.Thread,
 				Other:     v.OtherStrings(),
@@ -1559,7 +1648,7 @@ func (c *Client) Recv() (stanza interface{}, err error) {
 				Lang:      v.Lang,
 				OriginID:  v.OriginID.ID,
 				StanzaID:  v.StanzaID,
-				Reply:     v.Reply,
+				Reply:     reply,
 				Oob:       v.Oob,
 			}
 			return chat, nil
@@ -1851,13 +1940,20 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 		oobtext += `</x>`
 	}
 
-	var replytext string
-	if chat.Reply != nil {
+	var replytext, fallbacktext string
+	if chat.Reply != nil && chat.Reply.ID != `` {
 		replytext = `<reply id='` + xmlEscape(chat.Reply.ID) + `'`
 		if chat.Reply.To != `` {
 			replytext += ` to='` + xmlEscape(chat.Reply.To) + `'`
 		}
 		replytext += ` xmlns='urn:xmpp:reply:0'/>`
+
+		if chat.Reply.Quote != `` {
+			quotedPrefix := Quote(chat.Reply.Quote) + "\n"
+			end := len([]rune(quotedPrefix))
+			chat.Text = quotedPrefix + chat.Text
+			fallbacktext = fmt.Sprintf(`<fallback xmlns='urn:xmpp:fallback:0' for='urn:xmpp:reply:0'><body start='0' end='%d'/></fallback>`, end)
+		}
 	}
 
 	chat.Text = validUTF8(chat.Text)
@@ -1870,9 +1966,9 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 	}
 
 	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"+
-		"%s<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
+		"%s%s<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
 		xmlEscape(chat.Remote), xmlEscape(chat.Type), chat.ID, subtext, xmlEscape(chat.Text),
-		replytext, XMPPNS_SID_0, chat.OriginID, oobtext, thdtext)
+		replytext, fallbacktext, XMPPNS_SID_0, chat.OriginID, oobtext, thdtext)
 	if c.LimitMaxBytes != 0 && len(stanza) > c.LimitMaxBytes {
 		return 0, fmt.Errorf("stanza size (%v bytes) exceeds server limit (%v bytes)",
 			len(stanza), c.LimitMaxBytes)
@@ -2183,9 +2279,34 @@ type StanzaID struct {
 
 // XEP-0461 Message Replies
 type Reply struct {
+	ID    string
+	To    string
+	Quote string
+}
+
+type reply struct {
 	XMLName xml.Name `xml:"urn:xmpp:reply:0 reply"`
 	ID      string   `xml:"id,attr"`
 	To      string   `xml:"to,attr"`
+}
+
+// XEP-???? Compatibility Fallback
+// https://xmpp.org/extensions/inbox/compatibility-fallback.html
+//
+// This is not exposed to callers.
+// On incoming it is too complicated to adjust every Start/End to account
+// for the fallbacks that go-xmpp parses. Instead, go-xmpp parses _some_
+// fallbacks, deleting them from the associated Chat.Text, then forgets the rest.
+type fallback struct {
+	// XEPs mention both urn:xmpp:feature-fallback:0 and urn:xmpp:compat:0 but apps use:
+	// urn:xmpp:fallback:0
+	XMLName xml.Name `xml:"fallback"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	For     string   `xml:"for,attr"`
+	Bodies  []struct {
+		Start int `xml:"start,attr"`
+		End   int `xml:"end,attr"`
+	} `xml:"body"`
 }
 
 // RFC 3921  B.1  jabber:client
@@ -2207,7 +2328,11 @@ type clientMessage struct {
 	StanzaID StanzaID `xml:"stanza-id"`
 
 	// XEP-0461
-	Reply *Reply `xml:"reply"`
+	Reply *reply `xml:"reply"`
+
+	// XEP-????
+	// https://xmpp.org/extensions/inbox/compatibility-fallback.html
+	Fallbacks []fallback `xml:"fallback"`
 
 	// Pubsub
 	Event clientPubsubEvent `xml:"event"`
