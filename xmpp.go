@@ -1509,6 +1509,10 @@ type IQ struct {
 func (c *Client) Recv() (stanza interface{}, err error) {
 	for {
 		_, val, err := c.next()
+		if errors.Is(err, xml.UnmarshalError) {
+			// non-fatal; don't let malformed stanzas crash us
+			continue
+		}
 		if err != nil {
 			return Chat{}, err
 		}
@@ -2442,10 +2446,23 @@ func (c *Client) next() (xml.Name, interface{}, error) {
 
 	// Unmarshal into that storage.
 	c.nextMutex.Lock()
+	defer c.nextMutex.Unlock()
 	if err = c.p.DecodeElement(nv, &se); err != nil {
+		// Drain the rest of this element to resync the stream.
+		if skip_err := c.p.Skip(); skip_err != nil {
+			return xml.Name{}, nil, errors.Join(err, skip_err)
+		}
+
+		// XXX beware:
+		// we eventually need to distinguish between XMPP validation errors
+		// (i.e. a malformed namespace on some sub-element)
+		// and XML format errors -- which force a disconnect
+		// clients can cause validation errors, and should not be able to force a disconnect
+		// but should not be able to cause a format error, because the server
+		// should be filtering those out and force-disconnecting clients that send malformed XML.
+
 		return xml.Name{}, nil, err
 	}
-	c.nextMutex.Unlock()
 
 	return se.Name, nv, err
 }
