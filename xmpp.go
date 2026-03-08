@@ -1485,7 +1485,9 @@ type Chat struct {
 	StanzaID StanzaID // only for incoming messages
 	OriginID string   // if unset, will be generated on send
 	// XEP-0461
-	Reply     *Reply
+	Reply *Reply
+	// XEP-0444
+	Reactions *Reactions
 	Roster    Roster
 	Other     []string
 	OtherElem []XMLElement
@@ -1649,6 +1651,7 @@ func (c *Client) Recv() (stanza interface{}, err error) {
 				OriginID:  v.OriginID.ID,
 				StanzaID:  v.StanzaID,
 				Reply:     reply,
+				Reactions: v.Reactions,
 				Oob:       v.Oob,
 			}
 			return chat, nil
@@ -1956,6 +1959,21 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 		}
 	}
 
+	// XEP-0444 Message Reactions
+	var reactiontext string
+	if chat.Reactions != nil {
+		reactiontext += fmt.Sprintf(`<reactions xmlns='urn:xmpp:reactions:0' id='%s'>`, chat.Reactions.ID)
+		for _, r := range chat.Reactions.Reactions {
+			// if(!is_emoji(r)) {
+			// 	// TODO: actual validate this
+			// 	return 0, fmt.Errorf("Reaction '%s' is not an moji", r)
+			// }
+			reactiontext += fmt.Sprintf(`<reaction>%s</reaction>`, r)
+		}
+		reactiontext += `</reactions>`
+		chat.Text = ""
+	}
+
 	chat.Text = validUTF8(chat.Text)
 
 	if chat.OriginID == "" {
@@ -1965,10 +1983,17 @@ func (c *Client) Send(chat Chat) (n int, err error) {
 		chat.ID = chat.OriginID
 	}
 
-	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>%s<body>%s</body>"+
-		"%s%s<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
-		xmlEscape(chat.Remote), xmlEscape(chat.Type), chat.ID, subtext, xmlEscape(chat.Text),
-		replytext, fallbacktext, XMPPNS_SID_0, chat.OriginID, oobtext, thdtext)
+	stanza := fmt.Sprintf("<message to='%s' type='%s' id='%s' xml:lang='en'>",
+		xmlEscape(chat.Remote), xmlEscape(chat.Type), chat.ID)
+	if subtext != "" {
+		stanza += subtext
+	}
+	if chat.Text != "" {
+		stanza += fmt.Sprintf("<body>%s</body>", xmlEscape(chat.Text))
+	}
+	stanza += fmt.Sprintf("%s%s%s<origin-id xmlns='%s' id='%s'/>%s%s</message>\n",
+		replytext, fallbacktext, reactiontext, XMPPNS_SID_0, chat.OriginID, oobtext, thdtext)
+
 	if c.LimitMaxBytes != 0 && len(stanza) > c.LimitMaxBytes {
 		return 0, fmt.Errorf("stanza size (%v bytes) exceeds server limit (%v bytes)",
 			len(stanza), c.LimitMaxBytes)
@@ -2309,6 +2334,14 @@ type fallback struct {
 	} `xml:"body"`
 }
 
+// XEP-0444: Message Reactions
+type Reactions struct {
+	XMLName   xml.Name `xml:"reactions"`
+	Xmlns     string   `xml:"xmlns,attr"` // should be urn:xmpp:reactions:0
+	ID        string   `xml:"id,attr"`
+	Reactions []string `xml:"reaction"`
+}
+
 // RFC 3921  B.1  jabber:client
 type clientMessage struct {
 	XMLName xml.Name `xml:"jabber:client message"`
@@ -2333,6 +2366,9 @@ type clientMessage struct {
 	// XEP-????
 	// https://xmpp.org/extensions/inbox/compatibility-fallback.html
 	Fallbacks []fallback `xml:"fallback"`
+
+	// XEP-0444
+	Reactions *Reactions `xml:"reactions"`
 
 	// Pubsub
 	Event clientPubsubEvent `xml:"event"`
